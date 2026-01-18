@@ -1,94 +1,121 @@
-import express from "express";
+const express = require("express");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
 
-// Coloque esse mesmo valor lá no campo "Verificar token" do Meta
-const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "coloque-um-token-aqui";
+// Captura JSON do webhook
+app.use(express.json({ limit: "2mb" }));
 
-// Para debug rápido
+// Memória simples para debug
 let lastWebhookAt = null;
 let lastWebhookMethod = null;
 let lastWebhookQuery = null;
 let lastWebhookBody = null;
 
-// Middleware de JSON — precisa vir ANTES do POST /webhook
-app.use(express.json({ limit: "2mb" }));
+// Helpers
+function safeStr(v) {
+  if (v === undefined || v === null) return null;
+  return String(v);
+}
 
-// Home
+function getVerifyToken() {
+  // Aceita 2 nomes para evitar dor de cabeça
+  // (use WA_VERIFY_TOKEN no Render)
+  return (
+    process.env.WA_VERIFY_TOKEN ||
+    process.env.VERIFY_TOKEN ||
+    ""
+  ).trim();
+}
+
+// Health check
 app.get("/", (req, res) => {
   res.status(200).send("OK");
 });
 
-// Ping
-app.get("/ping", (req, res) => {
-  res.status(200).send("pong");
-});
-
 // Debug
 app.get("/debug", (req, res) => {
-  res.status(200).json({
+  const token = getVerifyToken();
+  res.json({
     ok: true,
     now: new Date().toISOString(),
     lastWebhookAt,
     lastWebhookMethod,
     lastWebhookQuery,
     lastWebhookBody,
-    verifyTokenConfigured: Boolean(process.env.VERIFY_TOKEN),
+    verifyTokenConfigured: token.length > 0
   });
 });
 
-/**
- * ✅ VERIFICAÇÃO DO WEBHOOK (GET)
- * A Meta chama isso para confirmar o endpoint.
- */
+// Webhook verification (Meta chama isso no "Verificar e salvar")
 app.get("/webhook", (req, res) => {
-  try {
-    const mode = req.query["hub.mode"];
-    const token = req.query["hub.verify_token"];
-    const challenge = req.query["hub.challenge"];
+  lastWebhookAt = new Date().toISOString();
+  lastWebhookMethod = "GET";
+  lastWebhookQuery = req.query;
+  lastWebhookBody = null;
 
-    // Log para aparecer no Render
-    console.log("[GET /webhook] mode=", mode, "token=", token ? "***" : null, "challenge=", challenge);
+  const mode = safeStr(req.query["hub.mode"]);
+  const tokenFromMeta = safeStr(req.query["hub.verify_token"]);
+  const challenge = safeStr(req.query["hub.challenge"]);
 
-    // Se o mode for subscribe e o token for igual ao VERIFY_TOKEN, responde o challenge
-    if (mode === "subscribe" && token === VERIFY_TOKEN) {
-      console.log("[GET /webhook] ✅ Verified!");
+  const configured = getVerifyToken();
+
+  // Logs úteis no Render (sem expor token)
+  console.log(`[GET /webhook] mode=${mode} tokenPresent=${!!tokenFromMeta} challengePresent=${!!challenge} configuredLen=${configured.length}`);
+
+  // Regras do Meta webhook verify
+  if (mode === "subscribe" && tokenFromMeta && challenge) {
+    if (configured.length === 0) {
+      console.log("[GET /webhook] Forbidden: verify token NOT configured in env");
+      return res.sendStatus(403);
+    }
+
+    if (tokenFromMeta === configured) {
+      console.log("[GET /webhook] Verified OK");
       return res.status(200).send(challenge);
     }
 
-    console.log("[GET /webhook] ❌ Forbidden (token mismatch or mode invalid)");
+    console.log("[GET /webhook] Forbidden: token mismatch");
     return res.sendStatus(403);
-  } catch (err) {
-    console.error("[GET /webhook] ERROR:", err);
-    return res.sendStatus(500);
   }
+
+  console.log("[GET /webhook] Bad request: missing hub params");
+  return res.sendStatus(400);
 });
 
-/**
- * ✅ RECEBIMENTO DE EVENTOS (POST)
- * Aqui chegam mensagens/status quando o webhook está verificado.
- */
+// Webhook events (mensagens/status chegam aqui)
 app.post("/webhook", (req, res) => {
   lastWebhookAt = new Date().toISOString();
   lastWebhookMethod = "POST";
   lastWebhookQuery = req.query;
   lastWebhookBody = req.body;
 
-  console.log("[POST /webhook] ✅ Received webhook");
-  // log resumido
-  console.log(JSON.stringify(req.body, null, 2));
+  // Log resumido (evita estourar log)
+  console.log("[POST /webhook] received event");
 
-  // Sempre responda 200 rápido
-  return res.sendStatus(200);
+  // IMPORTANTE: responder rápido 200
+  res.sendStatus(200);
+
+  // Aqui você processa eventos (mensagens recebidas, status, etc.)
+  // Exemplo: imprimir texto de mensagens recebidas (quando existir)
+  try {
+    const entry = req.body?.entry?.[0];
+    const changes = entry?.changes?.[0];
+    const value = changes?.value;
+
+    const messages = value?.messages;
+    if (Array.isArray(messages) && messages.length > 0) {
+      for (const msg of messages) {
+        const from = msg.from;
+        const text = msg?.text?.body;
+        console.log(`[INCOMING] from=${from} text=${text}`);
+      }
+    }
+  } catch (e) {
+    console.log("Error parsing webhook body:", e?.message);
+  }
 });
 
-// Fallback (para ver se está caindo em rota errada)
-app.use((req, res) => {
-  console.log("[404]", req.method, req.path);
-  res.status(404).json({ error: "Not found", path: req.path });
-});
-
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
