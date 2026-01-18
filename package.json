@@ -1,7 +1,7 @@
 {
   "name": "cartola-whatsapp-bot",
   "version": "1.0.0",
-  "description": "Bot privado WhatsApp Cloud API para rankings do Cartola",
+  "description": "Bot WhatsApp Cloud API (privado) + debug endpoint",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
