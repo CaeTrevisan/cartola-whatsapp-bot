@@ -1,1 +1,17 @@
-"scripts": { "start": "node src/index.js" }
+{
+  "name": "cartola-whatsapp-bot",
+  "version": "1.0.0",
+  "description": "Bot privado WhatsApp Cloud API para rankings do Cartola",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "express": "^4.19.2"
+  }
+}
