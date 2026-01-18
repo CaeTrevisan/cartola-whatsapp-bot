@@ -1,13 +1,1 @@
-{
-  "name": "cartola-whatsapp-bot",
-  "version": "1.0.0",
-  "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
-  "dependencies": {
-    "axios": "^1.7.7",
-    "express": "^4.19.2",
-    "pg": "^8.12.0"
-  }
-}
+"scripts": { "start": "node src/index.js" }
