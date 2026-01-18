@@ -1,12 +1,17 @@
 {
   "name": "cartola-whatsapp-bot",
   "version": "1.0.0",
-  "type": "module",
+  "description": "WhatsApp Cloud API webhook for Cartola bot",
   "main": "server.js",
+  "type": "commonjs",
   "scripts": {
     "start": "node server.js"
   },
+  "engines": {
+    "node": "20.x"
+  },
   "dependencies": {
+    "axios": "^1.6.8",
     "express": "^4.19.2"
   }
 }
