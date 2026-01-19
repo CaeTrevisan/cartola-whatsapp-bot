@@ -1,196 +1,173 @@
-import express from "express";
+'use strict';
+
+const express = require('express');
+const axios = require('axios');
 
 const app = express();
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: '1mb' }));
 
 const PORT = process.env.PORT || 10000;
 
-// ENV
-const WA_VERIFY_TOKEN = (process.env.WA_VERIFY_TOKEN || "").trim();
-const WA_TOKEN = (process.env.WA_TOKEN || "").trim();
+// ====== ENV ======
+const WA_VERIFY_TOKEN = process.env.WA_VERIFY_TOKEN || '';
+const WA_TOKEN = process.env.WA_TOKEN || '';
+const WA_PHONE_NUMBER_ID = process.env.WA_PHONE_NUMBER_ID || ''; // ex: 979665701887805
 
-// DEBUG: webhook
-let lastWebhookAt = null;
-let lastWebhookMethod = null;
-let lastWebhookQuery = null;
-let lastWebhookBody = null;
+// ====== DEBUG STATE ======
+const debugState = {
+  ok: true,
+  now: new Date().toISOString(),
+  lastWebhookAt: null,
+  lastWebhookMethod: null,
+  lastWebhookQuery: null,
+  lastWebhookBody: null,
+  verifyTokenConfigured: Boolean(WA_VERIFY_TOKEN),
 
-// DEBUG: envio
-let lastSendAt = null;
-let lastSendTo = null;
-let lastSendPhoneNumberId = null;
-let lastSendOk = null;
-let lastSendStatus = null;
-let lastSendResponse = null;
-let lastSendError = null;
+  lastSendAt: null,
+  lastSendPayload: null,
+  lastSendResult: null,
+  lastSendError: null
+};
 
-// ✅ marcador para você ter certeza de que está rodando este código
-app.get("/", (_, res) => res.status(200).send("OK v2"));
-
-app.get("/debug", (_, res) => {
-  res.json({
-    ok: true,
-    now: new Date().toISOString(),
-
-    verifyTokenConfigured: WA_VERIFY_TOKEN.length > 0,
-    waTokenConfigured: WA_TOKEN.length > 0,
-
-    lastWebhookAt,
-    lastWebhookMethod,
-    lastWebhookQuery,
-    lastWebhookBody,
-
-    lastSendAt,
-    lastSendTo,
-    lastSendPhoneNumberId,
-    lastSendOk,
-    lastSendStatus,
-    lastSendResponse,
-    lastSendError
-  });
-});
-
-// Webhook verification (GET)
-app.get("/webhook", (req, res) => {
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
-
-  console.log("[GET /webhook] mode=", mode, "tokenPresent=", !!token, "challengePresent=", !!challenge);
-
-  if (mode === "subscribe" && token === WA_VERIFY_TOKEN) {
-    console.log("[GET /webhook] ✅ Verified OK");
-    return res.status(200).send(challenge);
-  }
-  console.log("[GET /webhook] ❌ Forbidden");
-  return res.sendStatus(403);
-});
-
-function normalizeText(s = "") {
-  return s
-    .toString()
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "");
+// ====== Helpers ======
+function setNow() {
+  debugState.now = new Date().toISOString();
 }
 
-function helpText() {
-  return (
-    "🤖 Bot SHOW DE BOLA ARAÇA F.C\n\n" +
-    "Comandos:\n" +
-    "• ajuda\n" +
-    "• status\n" +
-    "• rodada\n\n" +
-    "✅ Se você está lendo isso, o bot já consegue responder."
-  );
+function normalizeText(s) {
+  return String(s || '').trim();
 }
 
-async function sendTextMessage({ phoneNumberId, to, body }) {
-  // salva no debug
-  lastSendAt = new Date().toISOString();
-  lastSendTo = to;
-  lastSendPhoneNumberId = phoneNumberId;
-  lastSendOk = null;
-  lastSendStatus = null;
-  lastSendResponse = null;
-  lastSendError = null;
+async function sendTextMessage(toWaId, text) {
+  if (!WA_TOKEN) throw new Error('WA_TOKEN vazio (env não configurada)');
+  if (!WA_PHONE_NUMBER_ID) throw new Error('WA_PHONE_NUMBER_ID vazio (env não configurada)');
 
-  if (!WA_TOKEN) {
-    lastSendOk = false;
-    lastSendError = "WA_TOKEN vazio ou não configurado no Render";
-    throw new Error(lastSendError);
-  }
-
-  const url = `https://graph.facebook.com/v22.0/${phoneNumberId}/messages`;
+  const url = `https://graph.facebook.com/v20.0/${WA_PHONE_NUMBER_ID}/messages`;
 
   const payload = {
-    messaging_product: "whatsapp",
-    to,
-    type: "text",
-    text: { body }
+    messaging_product: 'whatsapp',
+    to: toWaId,
+    text: { body: text }
   };
 
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${WA_TOKEN}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(payload)
-  });
+  debugState.lastSendAt = new Date().toISOString();
+  debugState.lastSendPayload = payload;
+  debugState.lastSendError = null;
+  debugState.lastSendResult = null;
 
-  const data = await resp.json().catch(() => ({}));
-
-  lastSendStatus = resp.status;
-  lastSendResponse = data;
-  lastSendOk = resp.ok;
-
-  if (!resp.ok) {
-    lastSendError = `Graph API error ${resp.status}`;
-    console.log("[SEND] ❌", resp.status, data);
-    throw new Error(lastSendError);
+  try {
+    const res = await axios.post(url, payload, {
+      headers: {
+        Authorization: `Bearer ${WA_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 15000
+    });
+    debugState.lastSendResult = { status: res.status, data: res.data };
+    return res.data;
+  } catch (err) {
+    debugState.lastSendError = {
+      message: err.message,
+      status: err.response?.status,
+      data: err.response?.data
+    };
+    throw err;
   }
-
-  console.log("[SEND] ✅", data);
-  return data;
 }
 
-// Webhook events (POST)
-app.post("/webhook", async (req, res) => {
-  // salva para debug
-  lastWebhookAt = new Date().toISOString();
-  lastWebhookMethod = "POST";
-  lastWebhookQuery = req.query || {};
-  lastWebhookBody = req.body || {};
+// ====== Routes ======
+app.get('/', (req, res) => {
+  setNow();
+  res.status(200).json({ ok: true, message: 'OK' });
+});
 
-  // responde 200 rápido para Meta
+// Debug endpoint
+app.get('/debug', (req, res) => {
+  setNow();
+  debugState.verifyTokenConfigured = Boolean(process.env.WA_VERIFY_TOKEN);
+  res.status(200).json(debugState);
+});
+
+// Webhook verification (Meta)
+app.get('/webhook', (req, res) => {
+  setNow();
+
+  debugState.lastWebhookAt = new Date().toISOString();
+  debugState.lastWebhookMethod = 'GET';
+  debugState.lastWebhookQuery = req.query;
+  debugState.lastWebhookBody = null;
+
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode === 'subscribe' && token && WA_VERIFY_TOKEN && token === WA_VERIFY_TOKEN) {
+    return res.status(200).send(challenge);
+  }
+
+  return res.status(403).send('Forbidden (token mismatch or missing)');
+});
+
+// Webhook receiver
+app.post('/webhook', async (req, res) => {
+  setNow();
+
+  debugState.lastWebhookAt = new Date().toISOString();
+  debugState.lastWebhookMethod = 'POST';
+  debugState.lastWebhookQuery = req.query || {};
+  debugState.lastWebhookBody = req.body;
+
+  // Responde rápido pra Meta não considerar timeout
   res.sendStatus(200);
 
   try {
-    const change = req.body?.entry?.[0]?.changes?.[0];
+    const entry = req.body?.entry?.[0];
+    const change = entry?.changes?.[0];
     const value = change?.value;
 
-    if (change?.field !== "messages") return;
-
-    const phoneNumberId = value?.metadata?.phone_number_id;
     const msg = value?.messages?.[0];
-    if (!phoneNumberId || !msg) return;
+    const contact = value?.contacts?.[0];
 
-    const from = msg.from;
+    if (!msg) return; // pode ser status update etc.
 
-    if (msg.type !== "text") return;
+    const from = msg.from; // wa_id do remetente (ex: 5518997642880)
+    const name = contact?.profile?.name || 'amigo';
 
-    const text = msg.text?.body || "";
-    const cmd = normalizeText(text);
+    // Só trata texto por enquanto
+    const text = normalizeText(msg.text?.body);
+    const textLower = text.toLowerCase();
 
-    console.log(`[MSG] from=${from} text="${text}" cmd="${cmd}" phoneNumberId=${phoneNumberId}`);
+    let reply = null;
 
-    // comandos
-    if (!cmd || cmd === "ajuda" || cmd === "help" || cmd === "menu") {
-      await sendTextMessage({ phoneNumberId, to: from, body: helpText() });
-      return;
+    if (!text) {
+      reply = `Oi ${name}! 🙂 Me manda uma mensagem em texto (ex: "ajuda").`;
+    } else if (textLower === 'ajuda' || textLower === 'menu') {
+      reply =
+        `🤖 Bot Cartola (teste)\n\n` +
+        `Comandos:\n` +
+        `• ajuda / menu\n` +
+        `• rodada\n` +
+        `• ranking\n` +
+        `• mensal\n\n` +
+        `Dica: por enquanto estou em modo básico.`;
+    } else if (textLower === 'rodada') {
+      reply = `📌 Rodada: (placeholder)\nAssim que integrarmos a API do Cartola eu monto o resumo da rodada.`;
+    } else if (textLower === 'ranking') {
+      reply = `🏆 Ranking geral: (placeholder)\nVou gerar ranking geral e também o "quem subiu/quem caiu" (no geral e no mensal).`;
+    } else if (textLower === 'mensal') {
+      reply = `📅 Mensal por rodadas: (placeholder)\nVocê vai definir quantas rodadas compõem o "mês" e eu comparo sobe/desce + zoeira.`;
+    } else {
+      reply = `Recebi: "${text}".\nDigite "ajuda" para ver comandos.`;
     }
 
-    if (cmd === "status") {
-      await sendTextMessage({ phoneNumberId, to: from, body: "✅ Status OK. Webhook e envio ativos." });
-      return;
-    }
-
-    if (cmd === "rodada") {
-      await sendTextMessage({
-        phoneNumberId,
-        to: from,
-        body: "🛠️ Rodada (ranking real) será ativado na próxima etapa. Por enquanto, WhatsApp OK."
-      });
-      return;
-    }
-
-    // fallback
-    await sendTextMessage({ phoneNumberId, to: from, body: `Recebi: ${text}\nDigite "ajuda" para comandos.` });
+    // Envia resposta
+    await sendTextMessage(from, reply);
   } catch (err) {
-    console.log("[ERROR webhook/send]", err?.message || err);
+    // O erro já fica gravado em debugState.lastSendError
+    console.error('Webhook processing error:', err?.message || err);
   }
 });
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
