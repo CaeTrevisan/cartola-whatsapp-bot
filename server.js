@@ -9,29 +9,47 @@ const PORT = process.env.PORT || 10000;
 const WA_VERIFY_TOKEN = (process.env.WA_VERIFY_TOKEN || "").trim();
 const WA_TOKEN = (process.env.WA_TOKEN || "").trim();
 
-// DEBUG
+// DEBUG: webhook
 let lastWebhookAt = null;
 let lastWebhookMethod = null;
 let lastWebhookQuery = null;
 let lastWebhookBody = null;
 
-// ========= ROTAS ÚTEIS =========
-app.get("/", (req, res) => res.status(200).send("OK"));
+// DEBUG: envio
+let lastSendAt = null;
+let lastSendTo = null;
+let lastSendPhoneNumberId = null;
+let lastSendOk = null;
+let lastSendStatus = null;
+let lastSendResponse = null;
+let lastSendError = null;
 
-app.get("/debug", (req, res) => {
+app.get("/", (_, res) => res.status(200).send("OK"));
+
+app.get("/debug", (_, res) => {
   res.json({
     ok: true,
     now: new Date().toISOString(),
+
+    verifyTokenConfigured: WA_VERIFY_TOKEN.length > 0,
+    waTokenConfigured: WA_TOKEN.length > 0,
+
     lastWebhookAt,
     lastWebhookMethod,
     lastWebhookQuery,
     lastWebhookBody,
-    verifyTokenConfigured: WA_VERIFY_TOKEN.length > 0,
-    waTokenConfigured: WA_TOKEN.length > 0
+
+    lastSendAt,
+    lastSendTo,
+    lastSendPhoneNumberId,
+    lastSendOk,
+    lastSendStatus,
+    lastSendResponse,
+    lastSendError
   });
 });
 
-// ========= 1) VERIFICAÇÃO DO WEBHOOK (GET) =========
+// Webhook verification (GET)
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
@@ -43,12 +61,10 @@ app.get("/webhook", (req, res) => {
     console.log("[GET /webhook] ✅ Verified OK");
     return res.status(200).send(challenge);
   }
-
   console.log("[GET /webhook] ❌ Forbidden");
   return res.sendStatus(403);
 });
 
-// ========= HELPERS =========
 function normalizeText(s = "") {
   return s
     .toString()
@@ -65,14 +81,33 @@ function helpText() {
     "• ajuda\n" +
     "• status\n" +
     "• rodada\n\n" +
-    "Obs: por enquanto o comando 'rodada' está em implantação."
+    "✅ Se você está lendo isso, o bot já consegue responder."
   );
 }
 
 async function sendTextMessage({ phoneNumberId, to, body }) {
-  if (!WA_TOKEN) throw new Error("WA_TOKEN não configurado no Render.");
+  lastSendAt = new Date().toISOString();
+  lastSendTo = to;
+  lastSendPhoneNumberId = phoneNumberId;
+  lastSendOk = null;
+  lastSendStatus = null;
+  lastSendResponse = null;
+  lastSendError = null;
+
+  if (!WA_TOKEN) {
+    lastSendOk = false;
+    lastSendError = "WA_TOKEN vazio ou não configurado no Render";
+    throw new Error(lastSendError);
+  }
 
   const url = `https://graph.facebook.com/v22.0/${phoneNumberId}/messages`;
+
+  const payload = {
+    messaging_product: "whatsapp",
+    to,
+    type: "text",
+    text: { body }
+  };
 
   const resp = await fetch(url, {
     method: "POST",
@@ -80,23 +115,23 @@ async function sendTextMessage({ phoneNumberId, to, body }) {
       Authorization: `Bearer ${WA_TOKEN}`,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({
-      messaging_product: "whatsapp",
-      to,
-      type: "text",
-      text: { body }
-    })
+    body: JSON.stringify(payload)
   });
 
   const data = await resp.json().catch(() => ({}));
+  lastSendStatus = resp.status;
+  lastSendResponse = data;
+  lastSendOk = resp.ok;
+
   if (!resp.ok) {
-    console.log("[SEND] ❌ Erro Graph:", resp.status, data);
-    throw new Error(`Graph error ${resp.status}`);
+    lastSendError = `Graph API error ${resp.status}`;
+    throw new Error(lastSendError);
   }
-  console.log("[SEND] ✅ OK:", data);
+
+  return data;
 }
 
-// ========= 2) RECEBIMENTO DE EVENTOS (POST) =========
+// Webhook events (POST)
 app.post("/webhook", async (req, res) => {
   // salva para debug
   lastWebhookAt = new Date().toISOString();
@@ -104,15 +139,13 @@ app.post("/webhook", async (req, res) => {
   lastWebhookQuery = req.query || {};
   lastWebhookBody = req.body || {};
 
-  // responde 200 rápido para Meta
+  // responde 200 rápido
   res.sendStatus(200);
 
   try {
-    const entry = req.body?.entry?.[0];
-    const change = entry?.changes?.[0];
+    const change = req.body?.entry?.[0]?.changes?.[0];
     const value = change?.value;
 
-    // Só processa mensagens
     if (change?.field !== "messages") return;
 
     const phoneNumberId = value?.metadata?.phone_number_id;
@@ -121,29 +154,21 @@ app.post("/webhook", async (req, res) => {
 
     const from = msg.from;
 
-    // Apenas texto por enquanto
-    if (msg.type !== "text") {
-      console.log("[MSG] tipo não-texto ignorado:", msg.type);
-      return;
-    }
+    if (msg.type !== "text") return;
 
     const text = msg.text?.body || "";
     const cmd = normalizeText(text);
 
     console.log(`[MSG] from=${from} text="${text}" cmd="${cmd}" phoneNumberId=${phoneNumberId}`);
 
-    // ===== COMANDOS =====
+    // comandos
     if (!cmd || cmd === "ajuda" || cmd === "help" || cmd === "menu") {
       await sendTextMessage({ phoneNumberId, to: from, body: helpText() });
       return;
     }
 
     if (cmd === "status") {
-      await sendTextMessage({
-        phoneNumberId,
-        to: from,
-        body: "✅ Status OK. Webhook e envio funcionando."
-      });
+      await sendTextMessage({ phoneNumberId, to: from, body: "✅ Status OK. Webhook e envio ativos." });
       return;
     }
 
@@ -151,19 +176,15 @@ app.post("/webhook", async (req, res) => {
       await sendTextMessage({
         phoneNumberId,
         to: from,
-        body: "🛠️ Rodada (ranking real) será ativado na próxima etapa. Por enquanto: tudo OK no WhatsApp."
+        body: "🛠️ Rodada (ranking real) será ativado na próxima etapa. Por enquanto, WhatsApp OK."
       });
       return;
     }
 
-    // fallback: eco
-    await sendTextMessage({
-      phoneNumberId,
-      to: from,
-      body: `Recebi: ${text}\n\nDigite "ajuda" para comandos.`
-    });
+    // fallback
+    await sendTextMessage({ phoneNumberId, to: from, body: `Recebi: ${text}\nDigite "ajuda" para comandos.` });
   } catch (err) {
-    console.log("[WEBHOOK] ❌ erro:", err?.message || err);
+    console.log("[ERROR webhook/send]", err?.message || err);
   }
 });
 
