@@ -24,7 +24,8 @@ let lastSendStatus = null;
 let lastSendResponse = null;
 let lastSendError = null;
 
-app.get("/", (_, res) => res.status(200).send("OK"));
+// ✅ marcador para você ter certeza de que está rodando este código
+app.get("/", (_, res) => res.status(200).send("OK v2"));
 
 app.get("/debug", (_, res) => {
   res.json({
@@ -86,6 +87,7 @@ function helpText() {
 }
 
 async function sendTextMessage({ phoneNumberId, to, body }) {
+  // salva no debug
   lastSendAt = new Date().toISOString();
   lastSendTo = to;
   lastSendPhoneNumberId = phoneNumberId;
@@ -119,15 +121,18 @@ async function sendTextMessage({ phoneNumberId, to, body }) {
   });
 
   const data = await resp.json().catch(() => ({}));
+
   lastSendStatus = resp.status;
   lastSendResponse = data;
   lastSendOk = resp.ok;
 
   if (!resp.ok) {
     lastSendError = `Graph API error ${resp.status}`;
+    console.log("[SEND] ❌", resp.status, data);
     throw new Error(lastSendError);
   }
 
+  console.log("[SEND] ✅", data);
   return data;
 }
 
@@ -139,7 +144,7 @@ app.post("/webhook", async (req, res) => {
   lastWebhookQuery = req.query || {};
   lastWebhookBody = req.body || {};
 
-  // responde 200 rápido
+  // responde 200 rápido para Meta
   res.sendStatus(200);
 
   try {
