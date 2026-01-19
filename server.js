@@ -1,173 +1,111 @@
 'use strict';
 
 const express = require('express');
-const axios = require('axios');
-
 const app = express();
-app.use(express.json({ limit: '1mb' }));
 
 const PORT = process.env.PORT || 10000;
 
-// ====== ENV ======
-const WA_VERIFY_TOKEN = process.env.WA_VERIFY_TOKEN || '';
-const WA_TOKEN = process.env.WA_TOKEN || '';
-const WA_PHONE_NUMBER_ID = process.env.WA_PHONE_NUMBER_ID || ''; // ex: 979665701887805
+// ====== CONFIG BÁSICA ======
+const LIGA_NOME = process.env.LIGA_NOME || 'SHOW DE BOLA ARAÇA F.C';
 
-// ====== DEBUG STATE ======
-const debugState = {
-  ok: true,
-  now: new Date().toISOString(),
-  lastWebhookAt: null,
-  lastWebhookMethod: null,
-  lastWebhookQuery: null,
-  lastWebhookBody: null,
-  verifyTokenConfigured: Boolean(WA_VERIFY_TOKEN),
+// Você pode editar esses nomes livremente (até 30)
+const PARTICIPANTES = [
+  'Carlos', 'João', 'Ana', 'Marcos', 'Pedro', 'Rafa', 'Bruno', 'Gabi',
+  'Diego', 'Lucas', 'Bia', 'Renato', 'Igor', 'Paula', 'Thiago'
+];
 
-  lastSendAt: null,
-  lastSendPayload: null,
-  lastSendResult: null,
-  lastSendError: null
-};
+// ====== ZOEIRAS PESADAS (ROTATIVAS) ======
+const ZOEIRAS_PESADAS = [
+  'Hoje teve gente que pontuou igual Wi-Fi de sítio: some toda hora. 📶😵',
+  'Se ponto fosse vergonha, alguns estavam milionários. 🫣💸',
+  'Teve time que veio só pra cumprir tabela… e olhe lá. 😮‍💨',
+  'Rodada boa pra quem gosta de sofrimento e placar feio. 🥀',
+  'A pontuação de alguns foi tão baixa que o app deveria pedir desculpa. 🙃',
+  'Tem gente que escala com o coração… e erra com a alma. ❤️➡️🗑️',
+  'Hoje o “mito” foi mito. E o resto foi figurante. 🎬',
+  'Se isso aí foi estratégia, eu sou astronauta. 🚀🤡',
+  'A rodada passou e alguns participantes nem perceberam. 🫥',
+  'A diferença entre o líder e o pelotão de baixo tá parecendo Série A x várzea. 🥶'
+];
 
-// ====== Helpers ======
-function setNow() {
-  debugState.now = new Date().toISOString();
+function pickZoeira(seedStr) {
+  // determinístico por rodada (pra não mudar toda hora)
+  let h = 0;
+  for (let i = 0; i < seedStr.length; i++) h = (h * 31 + seedStr.charCodeAt(i)) >>> 0;
+  return ZOEIRAS_PESADAS[h % ZOEIRAS_PESADAS.length];
 }
 
-function normalizeText(s) {
-  return String(s || '').trim();
+function fmtPts(n) {
+  return n.toFixed(2).replace('.', ',');
 }
 
-async function sendTextMessage(toWaId, text) {
-  if (!WA_TOKEN) throw new Error('WA_TOKEN vazio (env não configurada)');
-  if (!WA_PHONE_NUMBER_ID) throw new Error('WA_PHONE_NUMBER_ID vazio (env não configurada)');
+function medal(i) {
+  if (i === 0) return '🥇';
+  if (i === 1) return '🥈';
+  if (i === 2) return '🥉';
+  return `${i + 1}️⃣`;
+}
 
-  const url = `https://graph.facebook.com/v20.0/${WA_PHONE_NUMBER_ID}/messages`;
-
-  const payload = {
-    messaging_product: 'whatsapp',
-    to: toWaId,
-    text: { body: text }
-  };
-
-  debugState.lastSendAt = new Date().toISOString();
-  debugState.lastSendPayload = payload;
-  debugState.lastSendError = null;
-  debugState.lastSendResult = null;
-
-  try {
-    const res = await axios.post(url, payload, {
-      headers: {
-        Authorization: `Bearer ${WA_TOKEN}`,
-        'Content-Type': 'application/json'
-      },
-      timeout: 15000
-    });
-    debugState.lastSendResult = { status: res.status, data: res.data };
-    return res.data;
-  } catch (err) {
-    debugState.lastSendError = {
-      message: err.message,
-      status: err.response?.status,
-      data: err.response?.data
-    };
-    throw err;
+// ====== DADOS (MODO MOCK) ======
+// Nesta etapa, vamos gerar pontos “realistas” por rodada.
+// Depois, isso será substituído por dados reais do Cartola.
+function gerarPontuacoesMock(rodada) {
+  // usa rodada como seed para gerar sempre o mesmo ranking daquela rodada
+  let seed = Number(rodada) * 9301 + 49297;
+  function rnd() {
+    seed = (seed * 233280 + 12345) % 1000000;
+    return seed / 1000000;
   }
+
+  return PARTICIPANTES.map((nome) => {
+    const base = 45 + rnd() * 50; // 45 a 95
+    const variacao = (rnd() - 0.5) * 12; // -6 a +6
+    const pts = Math.max(0, base + variacao);
+    return { nome, pts: Number(pts.toFixed(2)) };
+  }).sort((a, b) => b.pts - a.pts);
 }
 
-// ====== Routes ======
+// ====== GERADOR DE MENSAGEM ======
+function montarMensagemRodada({ rodada, top }) {
+  const ranking = gerarPontuacoesMock(rodada).slice(0, top);
+
+  const lines = [];
+  lines.push(`🏆 ${LIGA_NOME}`);
+  lines.push(`📊 RANKING DA RODADA ${rodada}`);
+  lines.push('');
+
+  ranking.forEach((p, i) => {
+    lines.push(`${medal(i)} ${p.nome} — ${fmtPts(p.pts)} pts`);
+  });
+
+  lines.push('');
+  lines.push('😈 Resenha da rodada:');
+  lines.push(pickZoeira(`${LIGA_NOME}|rodada|${rodada}`));
+
+  return lines.join('\n');
+}
+
+// ====== ROTAS ======
+app.get('/health', (req, res) => {
+  res.status(200).json({ ok: true, liga: LIGA_NOME, participantes: PARTICIPANTES.length });
+});
+
+// Texto puro pra copiar/colar no WhatsApp
+app.get('/rodada', (req, res) => {
+  const rodada = req.query.rodada ? String(req.query.rodada) : '1';
+  const top = req.query.top ? Math.max(3, Math.min(30, Number(req.query.top))) : 10;
+
+  const msg = montarMensagemRodada({ rodada, top });
+
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.status(200).send(msg);
+});
+
+// Home simples (pra você ver que subiu)
 app.get('/', (req, res) => {
-  setNow();
-  res.status(200).json({ ok: true, message: 'OK' });
-});
-
-// Debug endpoint
-app.get('/debug', (req, res) => {
-  setNow();
-  debugState.verifyTokenConfigured = Boolean(process.env.WA_VERIFY_TOKEN);
-  res.status(200).json(debugState);
-});
-
-// Webhook verification (Meta)
-app.get('/webhook', (req, res) => {
-  setNow();
-
-  debugState.lastWebhookAt = new Date().toISOString();
-  debugState.lastWebhookMethod = 'GET';
-  debugState.lastWebhookQuery = req.query;
-  debugState.lastWebhookBody = null;
-
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
-
-  if (mode === 'subscribe' && token && WA_VERIFY_TOKEN && token === WA_VERIFY_TOKEN) {
-    return res.status(200).send(challenge);
-  }
-
-  return res.status(403).send('Forbidden (token mismatch or missing)');
-});
-
-// Webhook receiver
-app.post('/webhook', async (req, res) => {
-  setNow();
-
-  debugState.lastWebhookAt = new Date().toISOString();
-  debugState.lastWebhookMethod = 'POST';
-  debugState.lastWebhookQuery = req.query || {};
-  debugState.lastWebhookBody = req.body;
-
-  // Responde rápido pra Meta não considerar timeout
-  res.sendStatus(200);
-
-  try {
-    const entry = req.body?.entry?.[0];
-    const change = entry?.changes?.[0];
-    const value = change?.value;
-
-    const msg = value?.messages?.[0];
-    const contact = value?.contacts?.[0];
-
-    if (!msg) return; // pode ser status update etc.
-
-    const from = msg.from; // wa_id do remetente (ex: 5518997642880)
-    const name = contact?.profile?.name || 'amigo';
-
-    // Só trata texto por enquanto
-    const text = normalizeText(msg.text?.body);
-    const textLower = text.toLowerCase();
-
-    let reply = null;
-
-    if (!text) {
-      reply = `Oi ${name}! 🙂 Me manda uma mensagem em texto (ex: "ajuda").`;
-    } else if (textLower === 'ajuda' || textLower === 'menu') {
-      reply =
-        `🤖 Bot Cartola (teste)\n\n` +
-        `Comandos:\n` +
-        `• ajuda / menu\n` +
-        `• rodada\n` +
-        `• ranking\n` +
-        `• mensal\n\n` +
-        `Dica: por enquanto estou em modo básico.`;
-    } else if (textLower === 'rodada') {
-      reply = `📌 Rodada: (placeholder)\nAssim que integrarmos a API do Cartola eu monto o resumo da rodada.`;
-    } else if (textLower === 'ranking') {
-      reply = `🏆 Ranking geral: (placeholder)\nVou gerar ranking geral e também o "quem subiu/quem caiu" (no geral e no mensal).`;
-    } else if (textLower === 'mensal') {
-      reply = `📅 Mensal por rodadas: (placeholder)\nVocê vai definir quantas rodadas compõem o "mês" e eu comparo sobe/desce + zoeira.`;
-    } else {
-      reply = `Recebi: "${text}".\nDigite "ajuda" para ver comandos.`;
-    }
-
-    // Envia resposta
-    await sendTextMessage(from, reply);
-  } catch (err) {
-    // O erro já fica gravado em debugState.lastSendError
-    console.error('Webhook processing error:', err?.message || err);
-  }
+  res.status(200).send('OK — Gerador de mensagens (use /rodada?rodada=12)');
 });
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`✅ Server ON port ${PORT}`);
 });
