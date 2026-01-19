@@ -1,8 +1,9 @@
 {
-  "name": "cartola-whatsapp-bot",
+  "name": "show-de-bola-mensagens",
   "version": "1.0.0",
-  "description": "WhatsApp Cloud API bot (Cartola)",
+  "description": "Gerador de mensagens prontas (Cartola/Bolão) - sem WhatsApp API",
   "main": "server.js",
+  "type": "commonjs",
   "scripts": {
     "start": "node server.js"
   },
@@ -10,8 +11,6 @@
     "node": "20.x"
   },
   "dependencies": {
-    "axios": "^1.6.8",
-    "dotenv": "^16.4.5",
     "express": "^4.19.2"
   }
 }
